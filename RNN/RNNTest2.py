@@ -5,7 +5,8 @@ from mxnet import nd,autograd
 import random
 import zipfile
 import d2lzh as d2l
-
+"""加入了 门控制循环单元
+"""
 def load_data_jay_lyrics():
     #打开数据集，预处理以下
     with zipfile.ZipFile("D:\ChromeCoreDownloads\d2l-zh-1.0\data\jaychou_lyrics.txt.zip") as zin:
@@ -39,37 +40,62 @@ def to_onehot(X,size):
 def get_params():
     def _one(shape):
         return nd.random.normal(scale=0.01, shape=shape, ctx=ctx)
-    # 隐藏层参数
-    W_xh = _one((num_inputs, num_hiddens))
-    W_hh = _one((num_hiddens, num_hiddens))
-    b_h = nd.zeros(num_hiddens, ctx=ctx)
+    def _three():
+        return (_one((num_inputs, num_hiddens)),
+                _one((num_hiddens, num_hiddens)),
+                nd.zeros(num_hiddens, ctx=ctx))
+
+    W_xz, W_hz, b_z = _three()  # 更新门参数
+    W_xr, W_hr, b_r = _three()  # 重置门参数
+    W_xh, W_hh, b_h = _three()  # 候选隐藏状态参数
     # 输出层参数
     W_hq = _one((num_hiddens, num_outputs))
     b_q = nd.zeros(num_outputs, ctx=ctx)
     # 附上梯度
-    params = [W_xh, W_hh, b_h, W_hq, b_q]
+    params = [W_xz, W_hz, b_z, W_xr, W_hr, b_r, W_xh, W_hh, b_h, W_hq, b_q]
     for param in params:
         param.attach_grad()
     return params
 
-"""定义模型"""
+"""(初始化隐藏状态)"""
 def init_rnn_state(batch_size, num_hiddens, ctx):
     return (nd.zeros(shape=(batch_size, num_hiddens), ctx=ctx), )
 
-"""rnn函数定义了在一个时间步里如何计算隐藏状态和输出。
+
+
+
+
+
+"""
+定义模型
+rnn函数定义了在一个时间步里如何计算隐藏状态和输出。
 这里的激活函数使用了tanh函数"""
-def rnn(inputs, state, params):
-    # inputs和outputs皆为num_steps个形状为(batch_size, vocab_size)的矩阵
-    W_xh, W_hh, b_h, W_hq, b_q = params
+# def rnn(inputs, state, params):
+#     # inputs和outputs皆为num_steps个形状为(batch_size, vocab_size)的矩阵
+#     W_xh, W_hh, b_h, W_hq, b_q = params
+#     H, = state
+#     outputs = []
+#     print("rnn_input",inputs)
+#     for X in inputs:
+#         print("rnn_X",X)
+#         H = nd.tanh(nd.dot(X, W_xh) + nd.dot(H, W_hh) + b_h)
+#         Y = nd.dot(H, W_hq) + b_q
+#         outputs.append(Y)
+#         print("rnn_result_output:",outputs)
+#     return outputs, (H,)
+
+"""加入了门控制循环单元,   新的RNN模型"""
+def gru(inputs, state, params):
+    W_xz, W_hz, b_z, W_xr, W_hr, b_r, W_xh, W_hh, b_h, W_hq, b_q = params
     H, = state
     outputs = []
-    print("rnn_input",inputs)
     for X in inputs:
-        print("rnn_X",X)
-        H = nd.tanh(nd.dot(X, W_xh) + nd.dot(H, W_hh) + b_h)
+        Z = nd.sigmoid(nd.dot(X, W_xz) + nd.dot(H, W_hz) + b_z)
+        R = nd.sigmoid(nd.dot(X, W_xr) + nd.dot(H, W_hr) + b_r)
+        H_tilda = nd.tanh(nd.dot(X, W_xh) + nd.dot(R * H, W_hh) + b_h)
+        H = Z * H + (1 - Z) * H_tilda
         Y = nd.dot(H, W_hq) + b_q
         outputs.append(Y)
-        print("rnn_result_output:",outputs)
     return outputs, (H,)
 
 
@@ -212,7 +238,7 @@ if __name__ == '__main__':
 
 
 
-    train_and_predict_rnn(rnn, get_params, init_rnn_state, num_hiddens,
+    train_and_predict_rnn(gru, get_params, init_rnn_state, num_hiddens,
                       vocab_size, ctx, corpus_indices, idx_to_char,
                       char_to_idx, True, num_epochs, num_steps, lr,
                       clipping_theta, batch_size, pred_period, pred_len,
