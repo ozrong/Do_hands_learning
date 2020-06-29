@@ -5,11 +5,10 @@ from mxnet import nd,autograd
 import random
 import zipfile
 import d2lzh as d2l
-"""加入了 门控制循环单元
-"""
+
 def load_data_jay_lyrics():
     #打开数据集，预处理以下
-    with zipfile.ZipFile("D:\ChromeCoreDownloads\d2l-zh-1.0\data\jaychou_lyrics.txt.zip") as zin:
+    with zipfile.ZipFile("E:\CODE\python_code\Do_hands_learning\data\jaychou_lyrics.txt.zip") as zin:
         with zin.open("jaychou_lyrics.txt") as f:
             corpus_chars = f.read().decode("utf-8")
     corpus_chars[:40]
@@ -26,11 +25,7 @@ def load_data_jay_lyrics():
     return corpus_indices, char_to_idx, idx_to_char, vocab_size
 def to_onehot(X,size):
     input=[]
-    flag = 1
     for x in X.T:
-        # if(flag==1):
-        #     print(x)
-        #     flag=2
         temp=nd.one_hot(x, size)
         input.append(temp)
     # input=[nd.one_hot(x,size) for x in X.T]
@@ -41,62 +36,43 @@ def get_params():
     def _one(shape):
         return nd.random.normal(scale=0.01, shape=shape, ctx=ctx)
     def _three():
-        return (_one((num_inputs, num_hiddens)),
-                _one((num_hiddens, num_hiddens)),
-                nd.zeros(num_hiddens, ctx=ctx))
+        return (_one((num_inputs,num_hiddens)),
+                _one((num_hiddens,num_hiddens)),
+                nd.zeros(num_hiddens,ctx=ctx))
+    W_xi,W_hi,b_i = _three()#输入门参数
+    W_xf,W_hf,b_f = _three()#遗忘门参数
+    W_xo,W_ho,b_o = _three()#输出门参数
+    W_xc,W_hc,b_c = _three()#候选记忆细胞参数
+    W_hq=_one((num_hiddens,num_outputs))
+    b_q=nd.zeros(num_outputs,ctx=ctx)
 
-    W_xz, W_hz, b_z = _three()  # 更新门参数
-    W_xr, W_hr, b_r = _three()  # 重置门参数
-    W_xh, W_hh, b_h = _three()  # 候选隐藏状态参数
-    # 输出层参数
-    W_hq = _one((num_hiddens, num_outputs))
-    b_q = nd.zeros(num_outputs, ctx=ctx)
-    # 附上梯度
-    params = [W_xz, W_hz, b_z, W_xr, W_hr, b_r, W_xh, W_hh, b_h, W_hq, b_q]
+    params = [ W_xi,W_hi,b_i,W_xf,W_hf,b_f,W_xo,W_ho,b_o,W_xc,W_hc,b_c ,W_hq,b_q]
     for param in params:
         param.attach_grad()
     return params
 
-"""(初始化隐藏状态)"""
+"""定义模型"""
 def init_rnn_state(batch_size, num_hiddens, ctx):
-    return (nd.zeros(shape=(batch_size, num_hiddens), ctx=ctx), )
+    return (nd.zeros(shape=(batch_size, num_hiddens), ctx=ctx),#初始化隐藏状态
+            nd.zeros(shape=(batch_size, num_hiddens), ctx=ctx) )#初始化记忆细胞
 
-
-
-
-
-
-"""
-定义模型
-rnn函数定义了在一个时间步里如何计算隐藏状态和输出。
+"""rnn函数定义了在一个时间步里如何计算隐藏状态和输出。
 这里的激活函数使用了tanh函数"""
-# def rnn(inputs, state, params):
-#     # inputs和outputs皆为num_steps个形状为(batch_size, vocab_size)的矩阵
-#     W_xh, W_hh, b_h, W_hq, b_q = params
-#     H, = state
-#     outputs = []
-#     print("rnn_input",inputs)
-#     for X in inputs:
-#         print("rnn_X",X)
-#         H = nd.tanh(nd.dot(X, W_xh) + nd.dot(H, W_hh) + b_h)
-#         Y = nd.dot(H, W_hq) + b_q
-#         outputs.append(Y)
-#         print("rnn_result_output:",outputs)
-#     return outputs, (H,)
-
-"""加入了门控制循环单元,   新的RNN模型"""
-def gru(inputs, state, params):
-    W_xz, W_hz, b_z, W_xr, W_hr, b_r, W_xh, W_hh, b_h, W_hq, b_q = params
-    H, = state
+def lstm(inputs, state, params):
+    # inputs和outputs皆为num_steps个形状为(batch_size, vocab_size)的矩阵
+    [ W_xi,W_hi,b_i,W_xf,W_hf,b_f,W_xo,W_ho,b_o,W_xc,W_hc,b_c ,W_hq,b_q] = params
+    (H,C) = state
     outputs = []
     for X in inputs:
-        Z = nd.sigmoid(nd.dot(X, W_xz) + nd.dot(H, W_hz) + b_z)
-        R = nd.sigmoid(nd.dot(X, W_xr) + nd.dot(H, W_hr) + b_r)
-        H_tilda = nd.tanh(nd.dot(X, W_xh) + nd.dot(R * H, W_hh) + b_h)
-        H = Z * H + (1 - Z) * H_tilda
-        Y = nd.dot(H, W_hq) + b_q
+        I = nd.sigmoid(nd.dot(X,W_xi)+nd.dot(H,W_hi)+b_i)
+        F = nd.sigmoid(nd.dot(X,W_xf)+nd.dot(H,W_hf)+b_f)
+        O = nd.sigmoid(nd.dot(X,W_xo)+nd.dot(H,W_ho)+b_o)
+        C_tilda = nd.tanh(nd.dot(X,W_xc)+nd.dot(H,W_hc)+b_c)
+        C=F*C+I*C_tilda
+        H=C.tanh()*O
+        Y=nd.dot(H,W_hq)+b_q
         outputs.append(Y)
-    return outputs, (H,)
+    return outputs, (H,C)
 
 
 """定义预测函数
@@ -109,23 +85,18 @@ def predict_rnn(prefix, num_chars, rnn, params, init_rnn_state,
                 num_hiddens, vocab_size, ctx, idx_to_char, char_to_idx):
     state = init_rnn_state(1, num_hiddens, ctx)
     output = [char_to_idx[prefix[0]]]
-    print("output:",output)
+
     for t in range(num_chars + len(prefix) - 1):
         # 将上一时间步的输出作为当前时间步的输入
         a=output[-1]
-        print("output[-1]",a)
         X = to_onehot(nd.array([a], ctx=ctx), vocab_size)
-        print("X",X)
         # 计算输出和更新隐藏状态
         (Y, state) = rnn(X, state, params)
         # 下一个时间步的输入是prefix里的字符或者当前的最佳预测字符
         if t < len(prefix) - 1:
             output.append(char_to_idx[prefix[t + 1]])
-            print(prefix[t + 1])
         else:
             output.append(int(Y[0].argmax(axis=1).asscalar()))
-            print("int(Y[0].argmax(axis=1).asscalar()):",int(Y[0].argmax(axis=1).asscalar()))
-        print("result_output",output)
     return ''.join([idx_to_char[i] for i in output])
 
 """循环神经网络中较容易出现梯度衰减或梯度爆炸,为了应对梯度爆炸，我们可以裁剪梯度"""
@@ -234,13 +205,13 @@ if __name__ == '__main__':
 
 
     num_epochs, num_steps, batch_size, lr, clipping_theta = 250, 35, 32, 1e2, 1e-2
-    pred_period, pred_len, prefixes = 50, 50, ['分开', '不分开']
+    pred_period, pred_len, prefixes = 40, 50, ['分开', '不分开']
 
 
 
-    train_and_predict_rnn(gru, get_params, init_rnn_state, num_hiddens,
+    train_and_predict_rnn(lstm, get_params, init_rnn_state, num_hiddens,
                       vocab_size, ctx, corpus_indices, idx_to_char,
-                      char_to_idx, True, num_epochs, num_steps, lr,
+                      char_to_idx, False, num_epochs, num_steps, lr,
                       clipping_theta, batch_size, pred_period, pred_len,
                       prefixes)
 
